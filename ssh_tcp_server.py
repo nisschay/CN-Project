@@ -29,7 +29,7 @@ def get_host_key():
         return paramiko.RSAKey.generate(2048)
 
 class SSHServerInterface(paramiko.ServerInterface):
-    def __init__(self):  # Fixed: Use double underscores for init
+    def __init__(self):
         self.event = threading.Event()
         self.channel = None
 
@@ -84,13 +84,19 @@ def handle_client(client_socket, client_address):
         start_time = time.time()
         logger.info(f"TCP connection from {client_address[0]}:{client_address[1]}")
         
-        # Create transport
-        transport = paramiko.Transport(client_socket)
-        transport.local_version = "SSH-2.0-ParamikoSSHServer_0.1"  # Explicit version string
+        # CRITICAL FIX: Send SSH banner immediately through raw socket
+        # The SSH protocol requires this banner to be sent immediately
+        client_socket.sendall(b"SSH-2.0-ParamikoSSHServer_0.1\r\n")
+        logger.info("Sent initial SSH banner")
         
-        # Set timeout for better error handling
-        transport.banner_timeout = 60
-        transport.handshake_timeout = 60
+        # Create transport with the socket that already has the banner sent
+        transport = paramiko.Transport(client_socket)
+        # Must match the banner we already sent
+        transport.local_version = "SSH-2.0-ParamikoSSHServer_0.1"
+        
+        # Set long timeouts for better reliability
+        transport.banner_timeout = 120
+        transport.handshake_timeout = 120
         
         # Add server key
         host_key = get_host_key()
@@ -107,9 +113,9 @@ def handle_client(client_socket, client_address):
         
         # Wait for auth
         logger.info("Waiting for authentication")
-        channel = transport.accept(60)  # Increased timeout
+        channel = transport.accept(120)  # 2-minute timeout
         if channel is None:
-            logger.warning("No channel established")
+            logger.error("No channel established - authentication may have failed")
             return
 
         logger.info("Channel established, setting timeout to None")
@@ -117,10 +123,9 @@ def handle_client(client_socket, client_address):
         
         # Wait for client to request a shell or exec
         logger.info("Waiting for shell/exec request")
-        server.event.wait(30)  # Increased timeout
-        if not server.event.is_set():
-            logger.warning("No shell/exec request received")
-            # Continue anyway, as some clients may not explicitly request a shell
+        if not server.event.wait(60):  # Return value of wait() tells us if it timed out
+            logger.warning("No shell/exec request received within timeout")
+            # Continue anyway to be more lenient
         
         # Send welcome message
         try:

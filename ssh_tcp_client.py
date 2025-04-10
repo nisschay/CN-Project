@@ -25,6 +25,8 @@ class SSHClientTCP:
     def connect(self):
         """Connect to SSH server over TCP"""
         start_time = time.time()
+        sock = None
+        
         try:
             # Create client
             self.client = paramiko.SSHClient()
@@ -32,30 +34,47 @@ class SSHClientTCP:
             
             logger.info(f"Connecting to {self.host}:{self.port} via TCP...")
             
-            # Add longer timeout and explicitly set banner timeout
+            # Create socket first for better banner handling
+            sock = socket.create_connection((self.host, self.port), timeout=20)
+            logger.info("TCP socket connected, waiting for SSH banner")
+            
+            # Use much longer banner timeout and explicit connection parameters
             self.client.connect(
                 hostname=self.host,
                 port=self.port,
                 username=self.username,
                 password=self.password,
-                timeout=15,
-                banner_timeout=20  # Added explicit banner timeout
+                timeout=30,
+                banner_timeout=60,  # Much longer banner timeout (1 minute)
+                look_for_keys=False,  # Don't try to use SSH keys
+                allow_agent=False,   # Don't use SSH agent
+                sock=sock            # Use our pre-connected socket
             )
+            
+            logger.info("SSH connection established")
             
             # Get transport and open channel
             transport = self.client.get_transport()
+            if not transport:
+                raise Exception("No transport available after connect")
+                
             self.channel = transport.open_session()
+            if not self.channel:
+                raise Exception("Failed to open session channel")
+                
             self.channel.get_pty()
             self.channel.invoke_shell()
             
             # Wait for welcome message with a longer timeout
-            time.sleep(1)  # Give server time to send welcome message
+            time.sleep(2)  # Give server time to send welcome message
             output = b""
             if self.channel.recv_ready():
                 output = self.channel.recv(1024)
             
             if output:
                 logger.info(f"Server response: {output.decode('utf-8', errors='replace').strip()}")
+            else:
+                logger.warning("No initial server response received")
             
             self.connected = True
             self.connection_time = time.time() - start_time
@@ -64,6 +83,14 @@ class SSHClientTCP:
             
         except Exception as e:
             logger.error(f"Connection failed: {str(e)}")
+            # If we get a specific banner error, provide more details
+            if "Error reading SSH protocol banner" in str(e):
+                logger.error("SSH banner exchange failed. This likely means the server is not sending a proper SSH banner.")
+                logger.error("Check that the server is correctly implementing the SSH protocol.")
+            
+            if sock:
+                sock.close()
+                
             self.connected = False
             return False
     
@@ -86,13 +113,13 @@ class SSHClientTCP:
             output = b""
             wait_count = 0
             
-            while wait_count < 10:  # Add a maximum wait time
+            while wait_count < 20:  # Double the maximum wait time
                 if self.channel.recv_ready():
                     chunk = self.channel.recv(1024)
                     output += chunk
                     self.data_received += len(chunk)
-                    # If no more data, break
-                    if not self.channel.recv_ready():
+                    # If no more data and we have something, break
+                    if not self.channel.recv_ready() and output:
                         break
                 else:
                     wait_count += 1
@@ -106,7 +133,7 @@ class SSHClientTCP:
             }
             
             logger.info(f"Command executed in {execution_time:.2f} seconds")
-            logger.info(f"Data sent: {self.data_sent} bytes, received: {self.data_received} bytes")
+            logger.info(f"Data sent: {len(command_bytes)} bytes, received: {len(output)} bytes")
             return result
             
         except Exception as e:
@@ -198,7 +225,7 @@ def main():
     # Create SSH client and connect
     client = SSHClientTCP(host, port, username, password)
     
-    # Try TCP connection only (remove the UDP attempts)
+    # Try TCP connection
     if client.connect():
         # Run interactive session
         try:
