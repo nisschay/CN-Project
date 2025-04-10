@@ -1,0 +1,31 @@
+SSH Protocol Comparison Report
+==========================
+
+Connection Time:
+  TCP: 0.0000 seconds
+  UDP: 0.1019 seconds
+  Winner: TCP
+
+Data Transfer Efficiency:
+  TCP: Sent 0 bytes, Received 0 bytes
+  UDP: Sent 6118 bytes, Received 6357 bytes
+  TCP Overhead Ratio: 0.00
+  UDP Overhead Ratio: 0.96
+  Winner (lower is better): TCP
+
+Overall Recommendation:
+  TCP is recommended for SSH implementation based on the benchmark results.
+  Score: TCP 2, UDP 0
+
+Protocol-Specific Observations:
+  TCP:
+  - Connection-oriented, reliable by design
+  - Standard protocol for SSH, widely compatible
+  - Better flow control and congestion handling
+  - More overhead for connection establishment
+
+  UDP:
+  - Connectionless, requires custom reliability mechanisms
+  - Non-standard for SSH, limited compatibility
+  - Potentially lower latency for small packets
+  - More prone to packet loss
